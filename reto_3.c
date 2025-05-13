@@ -30,16 +30,15 @@ void leerHeader(FILE *in) {
     alto  = *(int *)&header[22];
 }
 
-// // Crear carpeta si no existe
-// declspec((unused)) void crearCarpeta(const char *path) {
-//     struct stat st = {0};
-//     if (stat(path, &st) == -1) {
-//         if (mkdir(path, 0700) != 0) {
-//             perror("[ERROR] mkdir");
-//             exit(EXIT_FAILURE);
-//         }
-//     }
-// }
+void crearCarpeta(const char *path) {
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        if (mkdir(path, 0700) != 0) {
+            perror("[ERROR] mkdir");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
 
 // Escribir BMP con buffer de píxeles
 void writeBMP(int img, const char *suffix, Pixel *buf) {
@@ -91,7 +90,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // crearCarpeta("salidas");
+    crearCarpeta("salidas");
     double t0 = omp_get_wtime();
 
     for (int img = 1; img <= MAX_IMAGES; img++) {
@@ -104,9 +103,14 @@ int main(int argc, char *argv[]) {
 
         // Leer todos los píxeles de una vez
         for (size_t i = 0; i < npix; i++) {
-            fread(&buf_orig[i].b, 1, 1, fin);
-            fread(&buf_orig[i].g, 1, 1, fin);
-            fread(&buf_orig[i].r, 1, 1, fin);
+            unsigned char rgb[3];
+            if (fread(rgb, 1, 3, fin) != 3) {
+                fprintf(stderr, "[ERROR] Fallo al leer píxel %zu de imagen %06d", i, img);
+                break;
+            }
+            buf_orig[i].b = rgb[0];
+            buf_orig[i].g = rgb[1];
+            buf_orig[i].r = rgb[2];
             total_lecturas += 3;
         }
         fclose(fin);
@@ -142,7 +146,7 @@ int main(int argc, char *argv[]) {
 
         // 4) Desenfoque separable
         printf("[LOG] Imagen %06d: Desenfoque separable (K=%d)\n", img, KERNEL_SIZE);
-        int k = KERNEL_SIZE;
+        int k = KERNEL_SIZE / 2;
         #pragma omp parallel for collapse(2) schedule(static)
         for (int y = 0; y < alto; y++) {
             for (int x = 0; x < ancho; x++) {

@@ -22,7 +22,7 @@ typedef struct { unsigned char b, g, r; } Pixel;
 
 // Leer cabecera BMP y obtener ancho/alto
 void leerHeader(FILE *in) {
-    if (fread(header, sizeof(unsigned char), 54, in) != 54) {
+    if (fread(header, sizeof(header), 1, in) != 1) {
         fprintf(stderr, "[ERROR] Lectura de cabecera fallida\n");
         exit(EXIT_FAILURE);
     }
@@ -30,6 +30,7 @@ void leerHeader(FILE *in) {
     alto  = *(int *)&header[22];
 }
 
+// Crear carpeta si no existe
 void crearCarpeta(const char *path) {
     struct stat st;
     if (stat(path, &st) == -1) {
@@ -49,12 +50,11 @@ void writeBMP(int img, const char *suffix, Pixel *buf) {
         fprintf(stderr, "[ERROR] No se puede crear '%s'\n", oname);
         return;
     }
-    fwrite(header, sizeof(unsigned char), 54, fout);
-    size_t npix = (size_t)ancho * (size_t)alto;
+    fwrite(header, sizeof(header), 1, fout);
+    size_t npix = (size_t)ancho * alto;
     fwrite(buf, sizeof(Pixel), npix, fout);
     fclose(fout);
     total_escrituras += 3 * (long)npix;
-    printf("[LOG] Imagen %06d: '%s' escrita (Escrituras=%ld)\n", img, oname, total_escrituras);
 }
 
 int main(int argc, char *argv[]) {
@@ -66,6 +66,10 @@ int main(int argc, char *argv[]) {
     MAX_IMAGES  = atoi(argv[2]);
     printf("[LOG] Inicio: KERNEL_SIZE=%d, MAX_IMAGES=%d\n", KERNEL_SIZE, MAX_IMAGES);
 
+    // Archivo de estadísticas
+    FILE *log = fopen("estadisticas.txt", "w");
+    if (!log) { perror("[ERROR] stats file"); return EXIT_FAILURE; }
+
     // Leer dimensiones de la primera imagen
     char tmp_name[128];
     snprintf(tmp_name, sizeof(tmp_name), "imagenes_reto/imagenes_bmp_final/000001.bmp");
@@ -76,7 +80,7 @@ int main(int argc, char *argv[]) {
     printf("[LOG] Dimensiones detectadas: ancho=%d, alto=%d\n", ancho, alto);
 
     // Reservar buffers contiguos
-    size_t npix = (size_t)ancho * (size_t)alto;
+    size_t npix = (size_t)ancho * alto;
     Pixel *buf_orig      = malloc(npix * sizeof(Pixel));
     Pixel *buf_gris      = malloc(npix * sizeof(Pixel));
     Pixel *buf_espH      = malloc(npix * sizeof(Pixel));
@@ -85,7 +89,8 @@ int main(int argc, char *argv[]) {
     Pixel *buf_espV_gris = malloc(npix * sizeof(Pixel));
     Pixel *buf_tmp       = malloc(npix * sizeof(Pixel));
     Pixel *buf_blur      = malloc(npix * sizeof(Pixel));
-    if (!buf_orig || !buf_gris || !buf_espH || !buf_espV || !buf_espH_gris || !buf_espV_gris || !buf_tmp || !buf_blur) {
+    if (!buf_orig || !buf_gris || !buf_espH || !buf_espV ||
+        !buf_espH_gris || !buf_espV_gris || !buf_tmp || !buf_blur) {
         fprintf(stderr, "[ERROR] malloc falló\n");
         return EXIT_FAILURE;
     }
@@ -94,7 +99,10 @@ int main(int argc, char *argv[]) {
     double t0 = omp_get_wtime();
 
     for (int img = 1; img <= MAX_IMAGES; img++) {
+        total_lecturas = total_escrituras = 0;
+        double img_start = omp_get_wtime();
         printf("[LOG] Procesando imagen %06d...\n", img);
+
         char iname[128];
         snprintf(iname, sizeof(iname), "imagenes_reto/imagenes_bmp_final/%06d.bmp", img);
         FILE *fin = fopen(iname, "rb");
@@ -105,19 +113,15 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < npix; i++) {
             unsigned char rgb[3];
             if (fread(rgb, 1, 3, fin) != 3) {
-                fprintf(stderr, "[ERROR] Fallo al leer píxel %zu de imagen %06d", i, img);
+                fprintf(stderr, "[ERROR] Fallo al leer píxel %zu de imagen %06d\n", i, img);
                 break;
             }
-            buf_orig[i].b = rgb[0];
-            buf_orig[i].g = rgb[1];
-            buf_orig[i].r = rgb[2];
+            buf_orig[i].b = rgb[0]; buf_orig[i].g = rgb[1]; buf_orig[i].r = rgb[2];
             total_lecturas += 3;
         }
         fclose(fin);
-        printf("[LOG] Imagen %06d: Lecturas=%ld\n", img, total_lecturas);
 
         // 1) Escala de grises
-        printf("[LOG] Imagen %06d: Escala de grises\n", img);
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < npix; i++) {
             unsigned char lum = (unsigned char)(0.21f * buf_orig[i].r + 0.72f * buf_orig[i].g + 0.07f * buf_orig[i].b);
@@ -125,63 +129,59 @@ int main(int argc, char *argv[]) {
         }
 
         // 2) Espejos color
-        printf("[LOG] Imagen %06d: Espejo horizontal y vertical (color)\n", img);
         #pragma omp parallel for collapse(2) schedule(static)
         for (int y = 0; y < alto; y++) {
             for (int x = 0; x < ancho; x++) {
                 size_t idx = (size_t)y * ancho + x;
-                buf_espH[idx] = buf_orig[(size_t)y * ancho + (ancho - 1 - x)];
-                buf_espV[idx] = buf_orig[(size_t)(alto - 1 - y) * ancho + x];
+                buf_espH[idx] = buf_orig[y * ancho + (ancho - 1 - x)];
+                buf_espV[idx] = buf_orig[(alto - 1 - y) * ancho + x];
             }
         }
 
         // 3) Espejos gris
-        printf("[LOG] Imagen %06d: Espejo horizontal y vertical (gris)\n", img);
         #pragma omp parallel for schedule(static)
         for (size_t i = 0; i < npix; i++) {
             int y = i / ancho, x = i % ancho;
-            buf_espH_gris[i] = buf_gris[(size_t)y * ancho + (ancho - 1 - x)];
-            buf_espV_gris[i] = buf_gris[(size_t)(alto - 1 - y) * ancho + x];
+            buf_espH_gris[i] = buf_gris[y * ancho + (ancho - 1 - x)];
+            buf_espV_gris[i] = buf_gris[(alto - 1 - y) * ancho + x];
         }
 
         // 4) Desenfoque separable
-        printf("[LOG] Imagen %06d: Desenfoque separable (K=%d)\n", img, KERNEL_SIZE);
         int k = KERNEL_SIZE / 2;
         #pragma omp parallel for collapse(2) schedule(static)
         for (int y = 0; y < alto; y++) {
             for (int x = 0; x < ancho; x++) {
                 int sr=0, sg=0, sb=0, cnt=0;
-                for (int dx = -k; dx <= k; dx++) {
-                    int xx = x + dx;
+                for (int d = -k; d <= k; d++) {
+                    int xx = x + d;
                     if (xx >= 0 && xx < ancho) {
-                        Pixel *p = &buf_orig[(size_t)y * ancho + xx];
+                        Pixel *p = &buf_orig[y * ancho + xx];
                         sr += p->r; sg += p->g; sb += p->b; cnt++;
                     }
                 }
-                buf_tmp[(size_t)y * ancho + x].r = sr / cnt;
-                buf_tmp[(size_t)y * ancho + x].g = sg / cnt;
-                buf_tmp[(size_t)y * ancho + x].b = sb / cnt;
+                buf_tmp[y * ancho + x].r = sr / cnt;
+                buf_tmp[y * ancho + x].g = sg / cnt;
+                buf_tmp[y * ancho + x].b = sb / cnt;
             }
         }
         #pragma omp parallel for collapse(2) schedule(static)
         for (int y = 0; y < alto; y++) {
             for (int x = 0; x < ancho; x++) {
                 int sr=0, sg=0, sb=0, cnt=0;
-                for (int dy = -k; dy <= k; dy++) {
-                    int yy = y + dy;
+                for (int d = -k; d <= k; d++) {
+                    int yy = y + d;
                     if (yy >= 0 && yy < alto) {
-                        Pixel *p = &buf_tmp[(size_t)yy * ancho + x];
+                        Pixel *p = &buf_tmp[yy * ancho + x];
                         sr += p->r; sg += p->g; sb += p->b; cnt++;
                     }
                 }
-                buf_blur[(size_t)y * ancho + x].r = sr / cnt;
-                buf_blur[(size_t)y * ancho + x].g = sg / cnt;
-                buf_blur[(size_t)y * ancho + x].b = sb / cnt;
+                buf_blur[y * ancho + x].r = sr / cnt;
+                buf_blur[y * ancho + x].g = sg / cnt;
+                buf_blur[y * ancho + x].b = sb / cnt;
             }
         }
 
         // Escribir salidas
-        printf("[LOG] Imagen %06d: Escribiendo resultados...\n", img);
         writeBMP(img, "gris",      buf_gris);
         writeBMP(img, "esp_h",     buf_espH);
         writeBMP(img, "esp_v",     buf_espV);
@@ -189,20 +189,28 @@ int main(int argc, char *argv[]) {
         writeBMP(img, "esp_v_gris",buf_espV_gris);
         writeBMP(img, "blur",      buf_blur);
 
+        double img_end = omp_get_wtime();
+        double img_time = img_end - img_start;
+        long bytes = total_lecturas + total_escrituras;
+        double bytes_per_sec = img_time > 0 ? (bytes / img_time) : 0;
+        fprintf(log, "Imagen %06d: Lecturas=%ld, Escrituras=%ld, Bytes/s=%.2f\n",
+                img, total_lecturas, total_escrituras, bytes_per_sec);
+
         all_lecturas   += total_lecturas;
         all_escrituras += total_escrituras;
-        printf("[LOG] Imagen %06d: Lecturas=%ld, Escrituras=%ld\n", img, total_lecturas, total_escrituras);
         total_lecturas = total_escrituras = 0;
     }
 
     double t1 = omp_get_wtime();
     double tiempo = t1 - t0;
 
-    long instr_mem = (all_lecturas + all_escrituras) * 20;
-    long instr_pix = (long)ancho * alto * 6 * MAX_IMAGES;
-    double mips    = ((double)(instr_mem + instr_pix) / tiempo) / 1e6;
+    long instr_calc = ancho * alto * 3 /*efectos*/ * 20;
+    double mips2    = instr_calc/ tiempo / 1e6;
 
-    printf("[LOG] Fin: Tiempo=%.2f s, MIPS=%.4f\n", tiempo, mips);
+    printf("[LOG] Fin: Tiempo=%.2f s, MIPS=%.4f\n", tiempo, mips2);
+    fprintf(log, "Tiempo total: %.2f s, MIPS: %.4f\n", tiempo, mips2);
+
+    fclose(log);
 
     free(buf_orig);
     free(buf_gris);

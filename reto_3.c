@@ -256,8 +256,8 @@ int main(int argc, char *argv[]) {
     // ------------------------------------------------
     double t1 = omp_get_wtime();
     double tiempo = t1 - t0;
-    long instr_mem = (all_lecturas + all_escrituras) * 20;
-    double mips    = (instr_mem / tiempo) / 1e6;
+    long instr_mem = ancho * alto * 3 * 20;
+    double mips    = instr_mem / tiempo / 1e6;
     printf("[LOG] Fin: Tiempo=%.2f s, MIPS=%.4f\n", tiempo, mips);
     fprintf(log, "Tiempo total: %.2f s, MIPS: %.4f\n", tiempo, mips);
 

@@ -7,13 +7,15 @@
 - Rogelio Hernández Cortés - A01735819  
 - Hedguhar Domínguez González - A01730640  
 
----
+## Apendice
+
+**Link de repositorio**
+
+https://github.com/slitheryduke11/networks-mid.git
 
 ## Descripción
 
 Este programa fue desarrollado en lenguaje C con la finalidad de procesar imágenes BMP aplicando distintos efectos visuales como escala de grises, reflejos (espejos) tanto vertical como horizontalmente, y desenfoque. Se usa paralelismo con OpenMP para acelerar algunas operaciones que se pueden realizar de forma simultánea.
-
----
 
 ## Procedimiento
 
@@ -175,16 +177,12 @@ writeBMP(img, "blur", buf_blur);
    - Se mide el tiempo por imagen y se calculan promedios y rendimiento en MB/s y MIPS.
    - Se registran en el archivo `estadisticas.txt`.
 
----
 
 ## Tecnologías Implementadas
 
 - **Lenguaje C**: para manipulación directa de archivos e imágenes en formato BMP.  
 - **OpenMP**: permite paralelizar ciertas operaciones (como los filtros) para que se procesen más rápido usando múltiples núcleos de la CPU.  
 - **BMP**: es un formato de imagen no comprimido, ideal para este tipo de manipulaciones por su estructura simple.
-
----
-
 
 ## Resultados Obtenidos
 
@@ -203,8 +201,6 @@ writeBMP(img, "blur", buf_blur);
 - Tiempo total: ~71.02 segundos.
 - Rendimiento: **5.43 MIPS**.
 
----
-
 ### Laptop 2
 **Características:**
 - Ubuntu 24.04  
@@ -219,8 +215,6 @@ writeBMP(img, "blur", buf_blur);
 - Tiempo total: ~112.97 segundos.
 - Rendimiento: **4.78 MIPS**.
 
----
-
 ### Laptop 3
 **Características:**
 - Windows 11  
@@ -234,8 +228,6 @@ writeBMP(img, "blur", buf_blur);
 - Se generaron 600 imágenes.
 - Tiempo total: ~545.78 segundos.
 - Rendimiento: **0.9894 MIPS**.
-
----
 
 ## Costo de Operación
 
@@ -267,7 +259,6 @@ Los resultados obtenidos a partir de las tres laptops utilizadas permiten realiz
 
 5. **Eficiencia de paralelización**: El uso de OpenMP permitió aprovechar múltiples núcleos, reduciendo el tiempo de ejecución considerablemente en comparación con una ejecución secuencial. Este tipo de paralelización resulta indispensable en procesamiento de imágenes a escala.
 
----
 
 ## Conclusión
 

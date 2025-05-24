@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <omp.h>
 #include <string.h>
+#include <mpi.h>
+#include <sys/stat.h>
 #include "bmp_utils.h"
 
 // Contadores de operaciones
@@ -13,29 +15,47 @@ static int KERNEL_SIZE = 55;
 static int MAX_IMAGES = 100;
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "Uso: %s <KERNEL_SIZE> <MAX_IMAGES>\n", argv[0]);
+    int rank, size;
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    if (argc != 4) {
+        if (rank == 0)
+            fprintf(stderr, "Uso: %s <KERNEL_SIZE> <MAX_IMAGES> <RUTA_IMAGENES>\n", argv[0]);
+        MPI_Finalize();
         return EXIT_FAILURE;
     }
 
     KERNEL_SIZE = atoi(argv[1]);
     MAX_IMAGES  = atoi(argv[2]);
-    printf("[LOG] Inicio: KERNEL_SIZE=%d, MAX_IMAGES=%d\n", KERNEL_SIZE, MAX_IMAGES);
+    const char *base_path = argv[3];
 
-    FILE *log = fopen("estadisticas.txt", "w");
-    if (!log) { perror("[ERROR] stats file"); return EXIT_FAILURE; }
+    struct stat st;
+    if (stat(base_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        if (rank == 0)
+            fprintf(stderr, "[ERROR] La ruta '%s' no existe o no es un directorio\n", base_path);
+        MPI_Finalize();
+        return EXIT_FAILURE;
+    }
 
-    // Ruta actualizada donde están tus imágenes
-    const char *base_path = "/Users/hugomr18/Documents/Semestre8/imagenes_reto/imagenes_bmp_final";
+    if (rank == 0)
+        printf("[LOG] Inicio (MPI ranks=%d): KERNEL_SIZE=%d, MAX_IMAGES=%d, RUTA=%s\n", size, KERNEL_SIZE, MAX_IMAGES, base_path);
 
-    // Leer dimensiones desde 000002.bmp (porque 000001.bmp no existe)
+    FILE *log = NULL;
+    if (rank == 0) {
+        log = fopen("estadisticas.txt", "w");
+        if (!log) { perror("[ERROR] stats file"); MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE); }
+    }
+
     char tmp_name[256];
     snprintf(tmp_name, sizeof(tmp_name), "%s/000002.bmp", base_path);
     FILE *tmpf = fopen(tmp_name, "rb");
-    if (!tmpf) { perror("[ERROR] Abrir imagen inicial"); return EXIT_FAILURE; }
+    if (!tmpf) { perror("[ERROR] Abrir imagen inicial"); MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE); }
     readHeader(tmpf);
     fclose(tmpf);
-    printf("[LOG] Dimensiones detectadas: width=%d, height=%d\n", width, height);
+    if (rank == 0)
+        printf("[LOG] Dimensiones detectadas: width=%d, height=%d\n", width, height);
 
     size_t npix = (size_t)width * height;
     Pixel *buf_orig   = malloc(npix * sizeof(Pixel));
@@ -49,30 +69,30 @@ int main(int argc, char *argv[]) {
     if (!buf_orig || !buf_gray || !buf_hmirror || !buf_vmirror ||
         !buf_hgray || !buf_vgray || !buf_tmp || !buf_blur) {
         fprintf(stderr, "[ERROR] malloc falló\n");
-        return EXIT_FAILURE;
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
 
-    createFolder("salidas");
-    double t0_global = omp_get_wtime();
-    double t_total_read = 0.0, t_total_gray = 0.0, t_total_mirror = 0.0;
-    double t_total_blur = 0.0, t_total_write = 0.0;
+    if (rank == 0) createFolder("salidas");
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    for (int img = 2; img < 2 + MAX_IMAGES; img++) {
+    double t0_global = omp_get_wtime();
+
+    for (int img = 2 + rank; img < 2 + MAX_IMAGES; img += size) {
         total_reads = total_writes = 0;
         double img_start = omp_get_wtime();
-        printf("[LOG] Procesando imagen %06d...\n", img);
+        printf("[RANK %d] Procesando imagen %06d...\n", rank, img);
 
         char iname[256];
         snprintf(iname, sizeof(iname), "%s/%06d.bmp", base_path, img);
         FILE *fin = fopen(iname, "rb");
-        if (!fin) { fprintf(stderr, "[ERROR] No se puede abrir %s\n", iname); continue; }
+        if (!fin) { fprintf(stderr, "[RANK %d] [ERROR] No se puede abrir %s\n", rank, iname); continue; }
         readHeader(fin);
         double t0 = omp_get_wtime();
 
         for (size_t i = 0; i < npix; i++) {
             unsigned char rgb[3];
             if (fread(rgb, 1, 3, fin) != 3) {
-                fprintf(stderr, "[ERROR] Fallo al leer píxel %zu\n", i);
+                fprintf(stderr, "[RANK %d] [ERROR] Fallo al leer píxel %zu\n", rank, i);
                 break;
             }
             buf_orig[i].b = rgb[0];
@@ -83,7 +103,6 @@ int main(int argc, char *argv[]) {
         fclose(fin);
         double t1 = omp_get_wtime();
         double t_read = t1 - t0;
-        t_total_read += t_read;
 
         t0 = omp_get_wtime();
         #pragma omp parallel for schedule(static)
@@ -93,7 +112,6 @@ int main(int argc, char *argv[]) {
         }
         t1 = omp_get_wtime();
         double t_gray = t1 - t0;
-        t_total_gray += t_gray;
 
         t0 = omp_get_wtime();
         #pragma omp parallel for collapse(2) schedule(static)
@@ -113,7 +131,6 @@ int main(int argc, char *argv[]) {
         }
         t1 = omp_get_wtime();
         double t_mirror = t1 - t0;
-        t_total_mirror += t_mirror;
 
         int k = KERNEL_SIZE / 2;
         t0 = omp_get_wtime();
@@ -152,7 +169,6 @@ int main(int argc, char *argv[]) {
         }
         t1 = omp_get_wtime();
         double t_blur = t1 - t0;
-        t_total_blur += t_blur;
 
         t0 = omp_get_wtime();
         writeBMP(img, "gris",      buf_gray, KERNEL_SIZE);
@@ -163,30 +179,32 @@ int main(int argc, char *argv[]) {
         writeBMP(img, "blur",      buf_blur, KERNEL_SIZE);
         t1 = omp_get_wtime();
         double t_write = t1 - t0;
-        t_total_write += t_write;
 
-        double img_end = omp_get_wtime();
-        double img_time = img_end - img_start;
+        double img_time = omp_get_wtime() - img_start;
         double mbytes_per_sec = ((double)npix * sizeof(Pixel)) / img_time / 1e6;
-        fprintf(log, "Img %06d: read=%.4f s, gray=%.4f s, mirror=%.4f s, blur=%.4f s, write=%.4f s, total=%.4f s, MB/s=%.2f\n",
-                img, t_read, t_gray, t_mirror, t_blur, t_write, img_time, mbytes_per_sec);
+
+        if (log && rank == 0) {
+            fprintf(log, "Img %06d: read=%.4fs, gray=%.4fs, mirror=%.4fs, blur=%.4fs, write=%.4fs, total=%.4fs, MB/s=%.2f\n",
+                    img, t_read, t_gray, t_mirror, t_blur, t_write, img_time, mbytes_per_sec);
+        }
 
         all_reads += total_reads;
         all_writes += total_writes;
     }
 
-    double t1_global = omp_get_wtime();
-    double total_time = t1_global - t0_global;
-    long instr_mem = width * height * 3 * 20;
-    double mips = instr_mem / total_time / 1e6;
-    double avg_mbps = (double)(width * height * sizeof(Pixel) * MAX_IMAGES) / total_time / 1e6;
-
-    printf("[LOG] Fin: Tiempo=%.2f s, MIPS=%.4f\n", total_time, mips);
-    fprintf(log, "Total=%.2f s, MIPS=%.4f, Promedio MB/s=%.2f\n", total_time, mips, avg_mbps);
-    fclose(log);
+    if (rank == 0) {
+        double total_time = omp_get_wtime() - t0_global;
+        long instr_mem = width * height * 3 * 20;
+        double mips = instr_mem / total_time / 1e6;
+        double avg_mbps = (double)(width * height * sizeof(Pixel) * MAX_IMAGES) / total_time / 1e6;
+        printf("[LOG] Fin: Tiempo=%.2fs, MIPS=%.4f\n", total_time, mips);
+        fprintf(log, "Total=%.2fs, MIPS=%.4f, Promedio MB/s=%.2f\n", total_time, mips, avg_mbps);
+        fclose(log);
+    }
 
     free(buf_orig); free(buf_gray); free(buf_hmirror); free(buf_vmirror);
     free(buf_hgray); free(buf_vgray); free(buf_tmp); free(buf_blur);
 
+    MPI_Finalize();
     return EXIT_SUCCESS;
 }

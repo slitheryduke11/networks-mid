@@ -151,21 +151,28 @@ int main(int argc, char *argv[]) {
 
         double total_time = omp_get_wtime() - t0_global;
 
-        // Cálculos requeridos
         long total_leidas = (long)width_local * height_local * total_images;
-        long total_escritas = total_leidas * 6; // 6 salidas por imagen
-        double pixeles_por_segundo = total_escritas / total_time;
+        long total_escritas = total_leidas * 6;
+        long total_operaciones = total_leidas + total_escritas;
+        long total_instrucciones = total_operaciones * 20;
 
-        // Guardar métricas
+        double pixeles_por_segundo = total_escritas / total_time;
+        double mips = (double)total_instrucciones / (1e6 * total_time);
+
+        // Guardar en archivo
         fprintf(log, "Tiempo total maestro: %.2fs\n", total_time);
         fprintf(log, "Total de localidades leídas (entrada): %ld\n", total_leidas);
         fprintf(log, "Total de localidades escritas (salidas): %ld\n", total_escritas);
         fprintf(log, "Pixeles procesados por segundo: %.3e\n", pixeles_por_segundo);
+        fprintf(log, "Total instrucciones estimadas (ensamblador): %ld\n", total_instrucciones);
+        fprintf(log, "Rendimiento estimado: %.3f MIPS\n", mips);
 
-        // También mostrar en consola
+        // Mostrar también en consola
         printf("[LOG] Tiempo total de ejecución: %.2fs\n", total_time);
         printf("[LOG] Total leídas: %ld, escritas: %ld\n", total_leidas, total_escritas);
         printf("[LOG] Rendimiento: %.3e pixeles/seg\n", pixeles_por_segundo);
+        printf("[LOG] Instrucciones estimadas: %ld, MIPS: %.3f\n", total_instrucciones, mips);
+
 
         fclose(log);
 

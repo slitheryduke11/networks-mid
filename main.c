@@ -69,7 +69,8 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Get_processor_name(hostname, &hostname_len);
-
+    omp_set_num_threads(4);
+    printf("[RANK %d] Usando 4 threads por proceso\n", rank);
     printf("[RANK %d] Ejecutando en host: %s\n", rank, hostname);
 
     if (argc != 3) {

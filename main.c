@@ -150,7 +150,23 @@ int main(int argc, char *argv[]) {
         }
 
         double total_time = omp_get_wtime() - t0_global;
+
+        // Cálculos requeridos
+        long total_leidas = (long)width_local * height_local * total_images;
+        long total_escritas = total_leidas * 6; // 6 salidas por imagen
+        double pixeles_por_segundo = total_escritas / total_time;
+
+        // Guardar métricas
         fprintf(log, "Tiempo total maestro: %.2fs\n", total_time);
+        fprintf(log, "Total de localidades leídas (entrada): %ld\n", total_leidas);
+        fprintf(log, "Total de localidades escritas (salidas): %ld\n", total_escritas);
+        fprintf(log, "Pixeles procesados por segundo: %.3e\n", pixeles_por_segundo);
+
+        // También mostrar en consola
+        printf("[LOG] Tiempo total de ejecución: %.2fs\n", total_time);
+        printf("[LOG] Total leídas: %ld, escritas: %ld\n", total_leidas, total_escritas);
+        printf("[LOG] Rendimiento: %.3e pixeles/seg\n", pixeles_por_segundo);
+
         fclose(log);
 
     } else {

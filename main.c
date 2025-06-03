@@ -31,16 +31,28 @@ char **get_filenames_from_dir(const char *dirname, int *count) {
     }
 
     filenames = malloc(capacity * sizeof(char *));
+    if (!filenames) {
+        perror("[ERROR] malloc filenames");
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
 
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type == DT_REG && strstr(entry->d_name, ".bmp")) {
             if (*count >= capacity) {
                 capacity *= 2;
                 filenames = realloc(filenames, capacity * sizeof(char *));
+                if (!filenames) {
+                    perror("[ERROR] realloc filenames");
+                    MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+                }
             }
             char fullpath[512];
             snprintf(fullpath, sizeof(fullpath), "%s/%s", dirname, entry->d_name);
             filenames[*count] = strdup(fullpath);
+            if (!filenames[*count]) {
+                perror("[ERROR] strdup filename");
+                MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            }
             (*count)++;
         }
     }
@@ -80,10 +92,15 @@ int main(int argc, char *argv[]) {
 
     MPI_Bcast(&total_images, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    char filenames_buffer[total_images][512];
+    char *filenames_buffer = malloc((size_t)total_images * 512);
+    if (!filenames_buffer) {
+        fprintf(stderr, "[RANK %d] Error malloc filenames_buffer\n", rank);
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
+
     if (rank == 0) {
         for (int i = 0; i < total_images; i++) {
-            strncpy(filenames_buffer[i], image_files[i], sizeof(filenames_buffer[i]));
+            strncpy(&filenames_buffer[i * 512], image_files[i], 512);
             free(image_files[i]);
         }
         free(image_files);
@@ -97,7 +114,7 @@ int main(int argc, char *argv[]) {
         if (!log) { perror("[ERROR] stats file"); MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE); }
     }
 
-    FILE *tmpf = fopen(filenames_buffer[0], "rb");
+    FILE *tmpf = fopen(&filenames_buffer[0], "rb");
     if (!tmpf) { perror("[ERROR] Abrir imagen inicial"); MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE); }
     readHeader(tmpf);
     fclose(tmpf);
@@ -147,7 +164,8 @@ int main(int argc, char *argv[]) {
 
             if (status.MPI_TAG == NO_MORE_TASKS) break;
 
-            const char *filename = filenames_buffer[task_id];
+            const char *filename = &filenames_buffer[task_id * 512];
+            printf("[RANK %d] Procesando imagen %d: %s\n", rank, task_id, filename);
 
             Pixel *buf_orig = malloc(npix * sizeof(Pixel));
             Pixel *buf_gray = malloc(npix * sizeof(Pixel));
@@ -158,9 +176,19 @@ int main(int argc, char *argv[]) {
             Pixel *buf_hgray = malloc(npix * sizeof(Pixel));
             Pixel *buf_vgray = malloc(npix * sizeof(Pixel));
 
+            if (!buf_orig || !buf_gray || !buf_tmp || !buf_blur ||
+                !buf_hmirror || !buf_vmirror || !buf_hgray || !buf_vgray) {
+                fprintf(stderr, "[RANK %d] Error malloc buffers en imagen %d\n", rank, task_id);
+                MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            }
+
             FILE *fin = fopen(filename, "rb");
-            if (!fin) { fprintf(stderr, "[RANK %d] [ERROR] No se puede abrir %s\n", rank, filename); continue; }
-            readHeader(fin);
+            if (!fin) {
+                fprintf(stderr, "[RANK %d] [ERROR] No se puede abrir %s\n", rank, filename);
+                free(buf_orig); free(buf_gray); free(buf_tmp); free(buf_blur);
+                free(buf_hmirror); free(buf_vmirror); free(buf_hgray); free(buf_vgray);
+                continue;
+            }
 
             for (size_t j = 0; j < npix; j++) {
                 unsigned char rgb[3];
@@ -235,12 +263,13 @@ int main(int argc, char *argv[]) {
             writeBMP(img_id, "esp_h_gris", buf_hgray, KERNEL_SIZE);
             writeBMP(img_id, "esp_v_gris", buf_vgray, KERNEL_SIZE);
             writeBMP(img_id, "blur", buf_blur, KERNEL_SIZE);
+            printf("[RANK %d] Terminó imagen %d\n", rank, task_id);
 
             free(buf_orig); free(buf_gray); free(buf_tmp); free(buf_blur);
             free(buf_hmirror); free(buf_vmirror); free(buf_hgray); free(buf_vgray);
         }
     }
-
+    free(filenames_buffer);
     MPI_Finalize();
     return EXIT_SUCCESS;
 }
